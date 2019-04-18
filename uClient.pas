@@ -28,7 +28,8 @@ uses
 
 procedure TfClient.idtcpclnt1Connected(Sender: TObject);
 begin
-  idtcpclnt1.IOHandler.DefStringEncoding := IndyTextEncoding_UTF8();
+  // 中文处理
+  // idtcpclnt1.IOHandler.DefStringEncoding := IndyTextEncoding_UTF8();
 end;
 
 end.

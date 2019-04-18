@@ -83,6 +83,6 @@ object fServer: TfServer
     OnException = idtcpsrvr1Exception
     OnExecute = idtcpsrvr1Execute
     Left = 536
-    Top = 56
+    Top = 32
   end
 end

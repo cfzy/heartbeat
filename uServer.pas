@@ -14,7 +14,7 @@ type
     Tag: Integer;
     Queue: TIdThreadSafeStringList;
 
-    constructor Create(AConnection: TIdTCPConnection; AYarn: TIdYarn; AList: TThreadList = nil); override;
+    constructor Create(AConnection: TIdTCPConnection; AYarn: TIdYarn; AList: TIdContextThreadList = nil); override;
     destructor Destroy; override;
   end;
 
@@ -49,9 +49,9 @@ uses
   uPublic;
 
 {$R *.dfm}
-
 { TMyContext }
-constructor TMyContext.Create(AConnection: TIdTCPConnection; AYarn: TIdYarn; AList: TThreadList = nil);
+
+constructor TMyContext.Create(AConnection: TIdTCPConnection; AYarn: TIdYarn; AList: TIdContextThreadList);
 begin
   inherited;
   Queue := TIdThreadSafeStringList.Create;
@@ -64,6 +64,7 @@ begin
 end;
 
 { TfServer }
+
 procedure TfServer.cbxVclStylesChange(Sender: TObject);
 begin
   TStyleManager.SetStyle(cbxVclStyles.Text);
@@ -78,11 +79,12 @@ begin
 
   cbxVclStyles.ItemIndex := cbxVclStyles.Items.IndexOf(TStyleManager.ActiveStyle.Name);
 
-  tglswtch1.StateCaptions.CaptionOn := 'ON';
-  tglswtch1.StateCaptions.CaptionOff := 'OFF';
-
   //
   idtcpsrvr1.ContextClass := TMyContext;
+
+  //
+  tglswtch1.StateCaptions.CaptionOn := 'ON';
+  tglswtch1.StateCaptions.CaptionOff := 'OFF';
 end;
 
 procedure TfServer.idtcpsrvr1Connect(AContext: TIdContext);
@@ -111,7 +113,7 @@ begin
   end;
 
   // 中文处理
-  AContext.Connection.IOHandler.DefStringEncoding := IndyTextEncoding_UTF8();
+  // AContext.Connection.IOHandler.DefStringEncoding := IndyTextEncoding_UTF8();
 
   //
   TMyContext(AContext).Queue.Clear;
@@ -125,15 +127,27 @@ end;
 procedure TfServer.idtcpsrvr1Disconnect(AContext: TIdContext);
 begin
   TMyContext(AContext).Queue.Clear;
+  // 连接断开
   mmoLog.Lines.Add('【' + AContext.Binding.PeerIP + ':' + IntToStr(AContext.Binding.PeerPort) + '】Disconnect.');
 end;
 
 procedure TfServer.tglswtch1Click(Sender: TObject);
 var
   p: Word;
+  n: Integer;
+  L: TList;
 begin
   if (TToggleSwitch(Sender).State = TToggleSwitchState(0)) then
   begin
+    L := idtcpsrvr1.Contexts.LockList;
+    try
+      for n := 0 to L.Count - 1 do
+      begin
+        TIdServerContext(L.Items[n]).Connection.Disconnect;
+      end;
+    finally
+      idtcpsrvr1.Contexts.UnlockList;
+    end;
     idtcpsrvr1.Active := False;
   end
   else if (TToggleSwitch(Sender).State = TToggleSwitchState(1)) then
@@ -151,7 +165,7 @@ end;
 
 procedure TfServer.idtcpsrvr1Exception(AContext: TIdContext; AException: Exception);
 begin
-  mmoLog.Lines.Add('客户端' + IntToStr(AContext.Binding.Handle) + '异常断开');
+  mmoLog.Lines.Add('客户端' + AContext.Binding.PeerIP + '异常断开');
   if AContext.Connection.Connected then
     AContext.Connection.Disconnect;
 end;
@@ -167,55 +181,58 @@ var
   MyContext: TMyContext;
 begin
   inherited;
-  if not(AContext.Connection.Socket.Connected) then
-    Exit;
-  AContext.Connection.Socket.CheckForDataOnSource(50);
-  if AContext.Connection.Socket.InputBufferIsEmpty() then
-    Exit;
+  AContext.Connection.IOHandler.CheckForDataOnSource(10);
 
-  pIP := AContext.Binding.PeerIP;
-  pPort := AContext.Binding.PeerPort;
-  rcvLen := AContext.Connection.Socket.InputBuffer.Size;
-  AContext.Connection.Socket.ReadBytes(rcvBuff, rcvLen, False);
-  SetLength(rcvMsg, rcvLen);
-  Move(rcvBuff[0], rcvMsg[1], rcvLen);
-  L := nil;
-  try
-    MyContext := TMyContext(AContext);
-    Q := MyContext.Queue.Lock;
+  if not(AContext.Connection.IOHandler.InputBufferIsEmpty()) then
+  begin
+    pIP := AContext.Binding.PeerIP;
+    pPort := AContext.Binding.PeerPort;
+    rcvLen := AContext.Connection.IOHandler.InputBuffer.Size;
+
+    AContext.Connection.IOHandler.ReadBytes(rcvBuff, rcvLen, False);
+    SetLength(rcvMsg, rcvLen);
+    Move(rcvBuff[0], rcvMsg[1], rcvLen);
+
+    //
+    L := nil;
     try
-      if (Q.Count > 0) then
-      begin
-        L := TStringList.Create;
-        L.Assign(Q);
-        Q.Clear;
+      MyContext := TMyContext(AContext);
+      Q := MyContext.Queue.Lock;
+      try
+        if (Q.Count > 0) then
+        begin
+          L := TStringList.Create;
+          L.Assign(Q);
+          Q.Clear;
+        end;
+      finally
+        MyContext.Queue.Unlock;
       end;
+      mmoLog.Lines.Add(pIP + ':' + IntToStr(pPort) + '>>' + rcvMsg);
+
+      if L <> nil then
+      begin
+        for n := 0 to Q.Count - 1 do
+        begin
+          // AContext.Connection.IOHandler.Write(Q.Strings[n]);
+        end;
+      end;
+
+      // 处理数据
+      // sendMsg := ProcessAbnormal(True, rcvMsg);
+      sendMsg := rcvMsg;
+
+      // 发送结果
+      sendLen := Length(sendMsg);
+      SetLength(sendBuff, sendLen);
+      Move(sendMsg[1], sendBuff[0], sendLen);
+      AContext.Connection.IOHandler.Write(sendBuff, sendLen);
+
+      mmoLog.Lines.Add('TCP发送数据：' + sendMsg);
+      Sleep(10);
     finally
-      MyContext.Queue.Unlock;
+      L.Free;
     end;
-    mmoLog.Lines.Add(pIP + ':' + IntToStr(pPort) + '>>' + rcvMsg);
-
-    if L <> nil then
-    begin
-      for n := 0 to Q.Count - 1 do
-      begin
-        AContext.Connection.IOHandler.Write(Q.Strings[n]);
-      end;
-    end;
-
-    // 处理数据
-    // sendMsg := ProcessAbnormal(True, rcvMsg);
-    sendMsg := rcvMsg;
-
-    // 发送结果
-    sendLen := Length(sendMsg);
-    SetLength(sendBuff, sendLen);
-    Move(sendMsg[1], sendBuff[0], sendLen);
-    AContext.Connection.Socket.Write(sendBuff, sendLen);
-    mmoLog.Lines.Add('TCP发送数据：' + sendMsg);
-    Sleep(10);
-  finally
-    L.Free;
   end;
 end;
 
