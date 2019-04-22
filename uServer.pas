@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics, IdGlobal, IdYarn,
   Winapi.Winsock2, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, IdBaseComponent, IdComponent, IdCustomTCPServer, IdTCPServer,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.WinXCtrls, Vcl.Themes, IdContext, IdScheduler, IdSchedulerOfThread, IdThreadSafe,
-  IdTCPConnection;
+  IdTCPConnection, IdSync;
 
 type
   TMyContext = class(TIdServerContext)
@@ -23,19 +23,26 @@ type
     idtcpsrvr1: TIdTCPServer;
     edtIP: TLabeledEdit;
     edtPort: TLabeledEdit;
-    tglswtch1: TToggleSwitch;
     lblVclStyle: TLabel;
     cbxVclStyles: TComboBox;
     mmoLog: TMemo;
+    btnListen: TButton;
     procedure cbxVclStylesChange(Sender: TObject);
     procedure FormCreate(Sender: TObject);
-    procedure tglswtch1Click(Sender: TObject);
     procedure idtcpsrvr1Connect(AContext: TIdContext);
     procedure idtcpsrvr1Exception(AContext: TIdContext; AException: Exception);
-    procedure idtcpsrvr1Execute(AContext: TIdContext);
     procedure idtcpsrvr1Disconnect(AContext: TIdContext);
+    procedure idtcpsrvr1Execute(AContext: TIdContext);
+    procedure btnListenClick(Sender: TObject);
+    procedure idtcpsrvr1Status(ASender: TObject; const AStatus: TIdStatus; const AStatusText: string);
   private
     { Private declarations }
+    procedure ShowConnectSetSockOpt();
+    procedure ShowConnectWSAIoctl();
+    // procedure ShowConnect(tcpID: Cardinal; tcpIP: string; tcpPort: Word);
+    procedure ShowConnect();
+    procedure ShowDisconnect();
+    procedure ShowException();
   public
     { Public declarations }
   end;
@@ -65,6 +72,40 @@ end;
 
 { TfServer }
 
+procedure TfServer.btnListenClick(Sender: TObject);
+var
+  p: Word;
+  n: Integer;
+  L: TList;
+begin
+  if (btnListen.Caption = '关闭') then
+  begin
+    L := idtcpsrvr1.Contexts.LockList;
+    try
+      for n := 0 to L.Count - 1 do
+      begin
+        TIdServerContext(L.Items[n]).Connection.Disconnect;
+      end;
+    finally
+      idtcpsrvr1.Contexts.UnlockList;
+    end;
+    idtcpsrvr1.Active := False;
+    btnListen.Caption := '打开';
+  end
+  else if (btnListen.Caption = '打开') then
+  begin
+    p := StrToIntDef(edtPort.Text, 0);
+    if not(p > 0) then
+      Exit;
+
+    idtcpsrvr1.Bindings.Clear;
+    idtcpsrvr1.Bindings.Add.IP := edtIP.Text;
+    idtcpsrvr1.Bindings.Add.Port := p;
+    idtcpsrvr1.Active := True;
+    btnListen.Caption := '关闭';
+  end;
+end;
+
 procedure TfServer.cbxVclStylesChange(Sender: TObject);
 begin
   TStyleManager.SetStyle(cbxVclStyles.Text);
@@ -81,10 +122,6 @@ begin
 
   //
   idtcpsrvr1.ContextClass := TMyContext;
-
-  //
-  tglswtch1.StateCaptions.CaptionOn := 'ON';
-  tglswtch1.StateCaptions.CaptionOff := 'OFF';
 end;
 
 procedure TfServer.idtcpsrvr1Connect(AContext: TIdContext);
@@ -98,17 +135,17 @@ begin
   opt := 1;
   if Winapi.Winsock2.setsockopt(AContext.Binding.Handle, SOL_SOCKET, SO_KEEPALIVE, @opt, SizeOf(opt)) <> 0 then
   begin
-    mmoLog.Lines.Add('setsockopt KeepAlive Error!');
+    TIdNotify.NotifyMethod(ShowConnectSetSockOpt);
     closesocket(AContext.Binding.Handle);
   end;
 
   inKlive.OnOff := 1;
-  inKlive.KeepAliveTime := 1000 * 30;
+  inKlive.KeepAliveTime := 1000 * 3;
   inKlive.KeepAliveInterval := 1000;
   if Winapi.Winsock2.WSAIoctl(AContext.Binding.Handle, SIO_KEEPALIVE_VALS, @inKlive, SizeOf(inKlive), @outKlive,
     SizeOf(outKlive), opt, nil, nil) = SOCKET_ERROR then
   begin
-    mmoLog.Lines.Add('WSAIoctl KeepAlive Error!');
+    TIdNotify.NotifyMethod(ShowConnectWSAIoctl);
     closesocket(AContext.Binding.Handle);
   end;
 
@@ -117,57 +154,37 @@ begin
 
   //
   TMyContext(AContext).Queue.Clear;
+  // ??idtcpsrvr1.Contexts.LockList.Count也要进行UnLockList，之前调试一直出现问题无法退出程序就是此处原因
   TMyContext(AContext).Tag := idtcpsrvr1.Contexts.LockList.Count + 1;
+  try
+
+  finally
+    idtcpsrvr1.Contexts.UnlockList;
+  end;
 
   //
-  mmoLog.Lines.Add('【' + IntToStr(AContext.Binding.Handle) + '|' + AContext.Binding.PeerIP + ':' +
-    IntToStr(AContext.Binding.PeerPort) + '】Connect.');
+  // mmoLog.Lines.Add('【' + IntToStr(AContext.Binding.Handle) + '|' + AContext.Binding.PeerIP + ':' +
+  // IntToStr(AContext.Binding.PeerPort) + '】Connect.');
+  // TIdNotify.NotifyMethod(ShowConnect(AContext.Binding.Handle, AContext.Binding.PeerIP, AContext.Binding.PeerPort));
+  TIdNotify.NotifyMethod(ShowConnect);
 end;
 
 procedure TfServer.idtcpsrvr1Disconnect(AContext: TIdContext);
 begin
+  // 这里不能直接操作VCL控件，OnConnect，OnDisConnect,OnException,OnExecute都是在线程里面执行
   TMyContext(AContext).Queue.Clear;
   // 连接断开
-  mmoLog.Lines.Add('【' + AContext.Binding.PeerIP + ':' + IntToStr(AContext.Binding.PeerPort) + '】Disconnect.');
-end;
-
-procedure TfServer.tglswtch1Click(Sender: TObject);
-var
-  p: Word;
-  n: Integer;
-  L: TList;
-begin
-  if (TToggleSwitch(Sender).State = TToggleSwitchState(0)) then
-  begin
-    L := idtcpsrvr1.Contexts.LockList;
-    try
-      for n := 0 to L.Count - 1 do
-      begin
-        TIdServerContext(L.Items[n]).Connection.Disconnect;
-      end;
-    finally
-      idtcpsrvr1.Contexts.UnlockList;
-    end;
-    idtcpsrvr1.Active := False;
-  end
-  else if (TToggleSwitch(Sender).State = TToggleSwitchState(1)) then
-  begin
-    p := StrToIntDef(edtPort.Text, 0);
-    if not(p > 0) then
-      Exit;
-
-    idtcpsrvr1.Bindings.Clear;
-    idtcpsrvr1.Bindings.Add.IP := edtIP.Text;
-    idtcpsrvr1.Bindings.Add.Port := p;
-    idtcpsrvr1.Active := True;
-  end;
+  // mmoLog.Lines.Add('【' + AContext.Binding.PeerIP + ':' + IntToStr(AContext.Binding.PeerPort) + '】Disconnect.');
+  TIdNotify.NotifyMethod(ShowDisconnect);
 end;
 
 procedure TfServer.idtcpsrvr1Exception(AContext: TIdContext; AException: Exception);
 begin
-  mmoLog.Lines.Add('客户端' + AContext.Binding.PeerIP + '异常断开');
+  // 这里不能直接操作VCL控件，OnConnect，OnDisConnect,OnException,OnExecute都是在线程里面执行
+  // mmoLog.Lines.Add('客户端' + AContext.Binding.PeerIP + '异常断开');
   if AContext.Connection.Connected then
     AContext.Connection.Disconnect;
+  TIdNotify.NotifyMethod(ShowException);
 end;
 
 procedure TfServer.idtcpsrvr1Execute(AContext: TIdContext);
@@ -180,7 +197,7 @@ var
   L, Q: TStringList;
   MyContext: TMyContext;
 begin
-  inherited;
+  // 这里不能直接操作VCL控件，OnConnect，OnDisConnect,OnException,OnExecute都是在线程里面执行
   AContext.Connection.IOHandler.CheckForDataOnSource(10);
 
   if not(AContext.Connection.IOHandler.InputBufferIsEmpty()) then
@@ -208,7 +225,7 @@ begin
       finally
         MyContext.Queue.Unlock;
       end;
-      mmoLog.Lines.Add(pIP + ':' + IntToStr(pPort) + '>>' + rcvMsg);
+      // mmoLog.Lines.Add(pIP + ':' + IntToStr(pPort) + '>>' + rcvMsg);
 
       if L <> nil then
       begin
@@ -229,11 +246,42 @@ begin
       AContext.Connection.IOHandler.Write(sendBuff, sendLen);
 
       mmoLog.Lines.Add('TCP发送数据：' + sendMsg);
-      Sleep(10);
     finally
       L.Free;
     end;
   end;
+end;
+
+procedure TfServer.idtcpsrvr1Status(ASender: TObject; const AStatus: TIdStatus; const AStatusText: string);
+begin
+
+end;
+
+// procedure TfServer.ShowConnect(tcpID: Cardinal; tcpIP: string; tcpPort: Word);
+procedure TfServer.ShowConnect;
+begin
+  // mmoLog.Lines.Add('【' + IntToStr(tcpID) + '|' + tcpIP + ':' + IntToStr(tcpPort) + '】Connect.');
+  mmoLog.Lines.Add(yyyyMMddHHmmss + 'Connect.');
+end;
+
+procedure TfServer.ShowConnectSetSockOpt;
+begin
+  mmoLog.Lines.Add(yyyyMMddHHmmss + 'setsockopt KeepAlive Error!');
+end;
+
+procedure TfServer.ShowConnectWSAIoctl;
+begin
+  mmoLog.Lines.Add(yyyyMMddHHmmss + 'WSAIoctl KeepAlive Error!');
+end;
+
+procedure TfServer.ShowDisconnect;
+begin
+  mmoLog.Lines.Add(yyyyMMddHHmmss + 'Disconnect.');
+end;
+
+procedure TfServer.ShowException;
+begin
+  mmoLog.Lines.Add(yyyyMMddHHmmss + 'Exception.');
 end;
 
 end.

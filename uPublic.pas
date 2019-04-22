@@ -2,6 +2,8 @@ unit uPublic;
 
 interface
 
+uses System.SysUtils;
+
 const
   IOC_IN = $80000000;
   IOC_VENDOR = $18000000;
@@ -17,6 +19,13 @@ type
     keepaliveinterval: integer;
   end;
 
+function yyyyMMddHHmmss(): string;
+
 implementation
+
+function yyyyMMddHHmmss: string;
+begin
+  Result := FormatDateTime('[yyyy-MM-dd HH:mm:ss]', Now());
+end;
 
 end.

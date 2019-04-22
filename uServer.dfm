@@ -48,21 +48,13 @@ object fServer: TfServer
     TabOrder = 1
     Text = '7695'
   end
-  object tglswtch1: TToggleSwitch
-    Left = 424
-    Top = 27
-    Width = 78
-    Height = 22
-    TabOrder = 2
-    OnClick = tglswtch1Click
-  end
   object cbxVclStyles: TComboBox
     Left = 120
     Top = 58
     Width = 193
     Height = 28
     Style = csDropDownList
-    TabOrder = 3
+    TabOrder = 2
     OnChange = cbxVclStylesChange
   end
   object mmoLog: TMemo
@@ -73,9 +65,19 @@ object fServer: TfServer
     Align = alBottom
     ReadOnly = True
     ScrollBars = ssVertical
+    TabOrder = 3
+  end
+  object btnListen: TButton
+    Left = 399
+    Top = 26
+    Width = 75
+    Height = 25
+    Caption = #25171#24320
     TabOrder = 4
+    OnClick = btnListenClick
   end
   object idtcpsrvr1: TIdTCPServer
+    OnStatus = idtcpsrvr1Status
     Bindings = <>
     DefaultPort = 0
     OnConnect = idtcpsrvr1Connect

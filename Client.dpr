@@ -2,7 +2,8 @@ program Client;
 
 uses
   Vcl.Forms,
-  uClient in 'uClient.pas' {fClient};
+  uClient in 'uClient.pas' {fClient},
+  uPublic in 'uPublic.pas';
 
 {$R *.res}
 
