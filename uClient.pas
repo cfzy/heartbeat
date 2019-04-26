@@ -7,12 +7,14 @@ uses
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs, IdBaseComponent, IdComponent, IdTCPConnection, IdTCPClient, Vcl.WinXCtrls,
   Vcl.StdCtrls, Vcl.ExtCtrls, Winapi.Winsock2;
 
+const
+  ReconnectInterval = 1000 * 10;
+
 type
   TidTcpClientRcvThread = class(TThread)
   private
+    _connOK: Boolean;
     _idTcpClnt: TIdTCPClient;
-    procedure ShowNormal();
-    procedure Display(const tip: string);
   protected
     procedure Execute; override;
   public
@@ -42,6 +44,7 @@ type
     procedure tmrConnTimer(Sender: TObject);
   private
     { Private declarations }
+    ConnCount: Integer;
     procedure ShowConnectSetSockOpt();
     procedure ShowConnectWSAIoctl();
     procedure ShowConnect();
@@ -49,6 +52,8 @@ type
   public
     { Public declarations }
   end;
+
+procedure Display(const tip: string);
 
 var
   fClient: TfClient;
@@ -60,21 +65,14 @@ uses
   uPublic;
 
 {$R *.dfm}
-{ TTcpClientRcvThread }
 
-constructor TidTcpClientRcvThread.Create(Suspend: Boolean; tcpclnt: TIdTCPClient);
-begin
-  _idTcpClnt := tcpclnt;
-  inherited Create(Suspend);
-end;
-
-procedure TidTcpClientRcvThread.Display(const tip: string);
+procedure Display(const tip: string);
 begin
   // 非阻塞执行，需保证内部访问数据线程安全
   TThread.Queue(nil,
     procedure
     begin
-      fClient.mmoLog.Lines.Add(yyyyMMddHHmmss + tip);
+      fClient.mmoLog.Lines.Add(yyyyMMddHHmmsszzz + tip);
     end);
 
   // 阻塞执行
@@ -83,6 +81,16 @@ begin
   // begin
   // fClient.mmoLog.Lines.Add(tip);
   // end);
+end;
+
+{ TTcpClientRcvThread }
+
+constructor TidTcpClientRcvThread.Create(Suspend: Boolean; tcpclnt: TIdTCPClient);
+begin
+  _idTcpClnt := tcpclnt;
+  _connOK := _idTcpClnt.Connected;
+
+  inherited Create(Suspend);
 end;
 
 procedure TidTcpClientRcvThread.Execute;
@@ -112,7 +120,6 @@ begin
         Move(rcvBuff[0], rcvMsg[1], rcvLen);
         RcvList.Add(FormatDateTime('[yyyy-MM-dd HH:mm:ss]', Now()) + rcvMsg);
         Display(string(rcvMsg));
-        // Synchronize(ShowNormal); // 接收数据显示
 
         // sendMsg := rcvMsg;
         //
@@ -123,20 +130,24 @@ begin
         // _idTcpClnt.IOHandler.Write(sendBuff, sendLen);
       end;
     end;
+
+    _connOK := False;
+    fClient.btnConn.Caption := '连接';
+    fClient.tmrConn.Enabled := False;
+    fClient.tmrConn.Interval := ReconnectInterval;
+    fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
   except
     on e: Exception do
     begin
       Display('断开.' + #13#10 + e.Message);
+      _connOK := False;
       // if _idTcpClnt.Connected then
       _idTcpClnt.Disconnect();
-      // fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
+      fClient.tmrConn.Enabled := False;
+      fClient.tmrConn.Interval := ReconnectInterval;
+      fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
     end;
   end;
-end;
-
-procedure TidTcpClientRcvThread.ShowNormal;
-begin
-
 end;
 
 { TfClient }
@@ -154,7 +165,13 @@ begin
 
     idtcpclnt1.Host := edtIP.Text;
     idtcpclnt1.Port := p;
-    idtcpclnt1.Connect();
+    try
+      idtcpclnt1.Connect();
+    except
+      tmrConn.Enabled := False;
+      tmrConn.Interval := ReconnectInterval;
+      tmrConn.Enabled := True;
+    end;
   end
   else if (btnConn.Caption = '断开') then
   begin
@@ -191,6 +208,7 @@ end;
 procedure TfClient.FormCreate(Sender: TObject);
 begin
   RcvList := TStringList.Create;
+  ConnCount := 0;
 end;
 
 procedure TfClient.idtcpclnt1Connected(Sender: TObject);
@@ -209,7 +227,7 @@ begin
 
   inKlive.OnOff := 1;
   inKlive.KeepAliveTime := 1000 * 3;
-  inKlive.KeepAliveInterval := 1000;
+  inKlive.KeepAliveInterval := 600;
   if Winapi.Winsock2.WSAIoctl(idtcpclnt1.Socket.Binding.Handle, SIO_KEEPALIVE_VALS, @inKlive, SizeOf(inKlive),
     @outKlive, SizeOf(outKlive), opt, nil, nil) = SOCKET_ERROR then
   begin
@@ -235,12 +253,12 @@ end;
 
 procedure TfClient.idtcpclnt1Status(ASender: TObject; const AStatus: TIdStatus; const AStatusText: string);
 begin
-  mmoLog.Lines.Add('[Status:]' + IntToStr(Ord(AStatus)) + '-' + AStatusText);
+  mmoLog.Lines.Add(yyyyMMddHHmmsszzz + '[OnStatus:]' + IntToStr(Ord(AStatus)) + '-' + AStatusText);
 end;
 
 procedure TfClient.ShowConnect;
 begin
-  mmoLog.Lines.Add(yyyyMMddHHmmss + 'Connect.');
+  mmoLog.Lines.Add(yyyyMMddHHmmsszzz + 'Connect.');
 
   btnConn.Caption := '断开';
   tmrConn.Enabled := False;
@@ -248,22 +266,19 @@ end;
 
 procedure TfClient.ShowConnectSetSockOpt;
 begin
-  mmoLog.Lines.Add(yyyyMMddHHmmss + 'setsockopt KeepAlive Error!');
+  mmoLog.Lines.Add(yyyyMMddHHmmsszzz + 'setsockopt KeepAlive Error!');
 end;
 
 procedure TfClient.ShowConnectWSAIoctl;
 begin
-  mmoLog.Lines.Add(yyyyMMddHHmmss + 'WSAIoctl KeepAlive Error!');
+  mmoLog.Lines.Add(yyyyMMddHHmmsszzz + 'WSAIoctl KeepAlive Error!');
 end;
 
 procedure TfClient.ShowDisconnect;
 begin
-  mmoLog.Lines.Add(yyyyMMddHHmmss + 'Disconnect.');
+  mmoLog.Lines.Add(yyyyMMddHHmmsszzz + 'Disconnect.');
 
   btnConn.Caption := '连接';
-  tmrConn.Enabled := False;
-  tmrConn.Interval := 1000 * 60 * 3;
-  tmrConn.Enabled := True;
 end;
 
 procedure TfClient.tmrConnTimer(Sender: TObject);
@@ -272,18 +287,20 @@ var
   n: Integer;
 begin
   tmrConn.Enabled := False;
-  tmrConn.Interval := 1000 * 60 * 3;
-  tmrConn.Enabled := True;
+  tmrConn.Interval := ReconnectInterval;
+  Inc(ConnCount);
+  mmoLog.Lines.Add(yyyyMMddHHmmsszzz + '第' + IntToStr(ConnCount) + '次断线重连。');
 
-  if (btnConn.Caption = '连接') then
-  begin
-    p := StrToIntDef(edtPort.Text, 0);
-    if not(p > 0) then
-      Exit;
+  p := StrToIntDef(edtPort.Text, 0);
+  if not(p > 0) then
+    Exit;
 
-    idtcpclnt1.Host := edtIP.Text;
-    idtcpclnt1.Port := p;
+  idtcpclnt1.Host := edtIP.Text;
+  idtcpclnt1.Port := p;
+  try
     idtcpclnt1.Connect();
+  except
+    tmrConn.Enabled := True;
   end;
 end;
 

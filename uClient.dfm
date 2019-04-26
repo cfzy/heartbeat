@@ -34,7 +34,7 @@ object fClient: TfClient
       LabelPosition = lpLeft
       LabelSpacing = 4
       TabOrder = 0
-      Text = '127.0.0.1'
+      Text = '192.168.0.254'
     end
     object edtPort: TLabeledEdit
       Left = 272

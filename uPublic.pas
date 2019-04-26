@@ -20,12 +20,18 @@ type
   end;
 
 function yyyyMMddHHmmss(): string;
+function yyyyMMddHHmmsszzz(): string;
 
 implementation
 
 function yyyyMMddHHmmss: string;
 begin
   Result := FormatDateTime('[yyyy-MM-dd HH:mm:ss]', Now());
+end;
+
+function yyyyMMddHHmmsszzz: string;
+begin
+  Result := FormatDateTime('[yyyy-MM-dd HH:mm:ss.zzz]', Now());
 end;
 
 end.
