@@ -11,6 +11,16 @@ const
   ReconnectInterval = 1000 * 10;
 
 type
+  TReconnectThread = class(TThread)
+  private
+    _tcpclnt: TIdTCPClient;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(Suspend: Boolean; tcpclnt: TIdTCPClient); overload;
+  end;
+
+type
   TidTcpClientRcvThread = class(TThread)
   private
     _connOK: Boolean;
@@ -44,7 +54,6 @@ type
     procedure tmrConnTimer(Sender: TObject);
   private
     { Private declarations }
-    ConnCount: Integer;
     procedure ShowConnectSetSockOpt();
     procedure ShowConnectWSAIoctl();
     procedure ShowConnect();
@@ -58,6 +67,8 @@ procedure Display(const tip: string);
 var
   fClient: TfClient;
   RcvList: TStringList;
+  ConnCount: Integer;
+  thReconnect: TReconnectThread;
 
 implementation
 
@@ -83,6 +94,43 @@ begin
   // end);
 end;
 
+{ TReconnectThread }
+
+constructor TReconnectThread.Create(Suspend: Boolean; tcpclnt: TIdTCPClient);
+begin
+  _tcpclnt := tcpclnt;
+
+  inherited Create(Suspend);
+end;
+
+procedure TReconnectThread.Execute;
+var
+  i, n: Integer;
+begin
+  inherited;
+  FreeOnTerminate := True;
+  n := ReconnectInterval div 20;
+  if (n < 500) then
+    n := 500;
+
+  while not(_tcpclnt.Connected) do
+  begin
+    try
+      Inc(ConnCount);
+      Display('第' + IntToStr(ConnCount) + '次连接。');
+      _tcpclnt.Connect(); // 阻塞式连接，正在连接时退出程序会报socket 10038错误。
+    except
+      // 延时自动重连
+      for i := 1 to n do
+      begin
+        if Terminated then
+          Exit;
+
+        Sleep(20);
+      end;
+    end;
+  end;
+end;
 { TTcpClientRcvThread }
 
 constructor TidTcpClientRcvThread.Create(Suspend: Boolean; tcpclnt: TIdTCPClient);
@@ -133,9 +181,10 @@ begin
 
     _connOK := False;
     fClient.btnConn.Caption := '连接';
-    fClient.tmrConn.Enabled := False;
-    fClient.tmrConn.Interval := ReconnectInterval;
-    fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
+    thReconnect.Start;
+    // fClient.tmrConn.Enabled := False;
+    // fClient.tmrConn.Interval := ReconnectInterval;
+    // fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
   except
     on e: Exception do
     begin
@@ -143,9 +192,10 @@ begin
       _connOK := False;
       // if _idTcpClnt.Connected then
       _idTcpClnt.Disconnect();
-      fClient.tmrConn.Enabled := False;
-      fClient.tmrConn.Interval := ReconnectInterval;
-      fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
+      thReconnect.Start;
+      // fClient.tmrConn.Enabled := False;
+      // fClient.tmrConn.Interval := ReconnectInterval;
+      // fClient.tmrConn.Enabled := True; // 这儿启动定时器重连服务端
     end;
   end;
 end;
@@ -165,13 +215,15 @@ begin
 
     idtcpclnt1.Host := edtIP.Text;
     idtcpclnt1.Port := p;
-    try
-      idtcpclnt1.Connect();
-    except
-      tmrConn.Enabled := False;
-      tmrConn.Interval := ReconnectInterval;
-      tmrConn.Enabled := True;
-    end;
+    thReconnect := TReconnectThread.Create(True, idtcpclnt1);
+    thReconnect.Start;
+    // try
+    // idtcpclnt1.Connect();
+    // except
+    // tmrConn.Enabled := False;
+    // tmrConn.Interval := ReconnectInterval;
+    // tmrConn.Enabled := True;
+    // end;
   end
   else if (btnConn.Caption = '断开') then
   begin
@@ -203,6 +255,9 @@ end;
 procedure TfClient.FormClose(Sender: TObject; var Action: TCloseAction);
 begin
   RcvList.Free;
+
+  if Assigned(thReconnect) then
+    thReconnect.Terminate;
 end;
 
 procedure TfClient.FormCreate(Sender: TObject);
@@ -222,7 +277,7 @@ begin
   if Winapi.Winsock2.setsockopt(idtcpclnt1.Socket.Binding.Handle, SOL_SOCKET, SO_KEEPALIVE, @opt, SizeOf(opt)) <> 0 then
   begin
     TIdNotify.NotifyMethod(ShowConnectSetSockOpt);
-    closesocket(idtcpclnt1.Socket.Binding.Handle);
+    // closesocket(idtcpclnt1.Socket.Binding.Handle);
   end;
 
   inKlive.OnOff := 1;
@@ -232,7 +287,7 @@ begin
     @outKlive, SizeOf(outKlive), opt, nil, nil) = SOCKET_ERROR then
   begin
     TIdNotify.NotifyMethod(ShowConnectWSAIoctl);
-    closesocket(idtcpclnt1.Socket.Binding.Handle);
+    // closesocket(idtcpclnt1.Socket.Binding.Handle);
   end;
 
   // 中文处理
@@ -261,7 +316,7 @@ begin
   mmoLog.Lines.Add(yyyyMMddHHmmsszzz + 'Connect.');
 
   btnConn.Caption := '断开';
-  tmrConn.Enabled := False;
+  // tmrConn.Enabled := False;
 end;
 
 procedure TfClient.ShowConnectSetSockOpt;
